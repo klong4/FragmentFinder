@@ -1,0 +1,344 @@
+<Window x:Class="FragmentFinder.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:FragmentFinder"
+        Title="FragmentFinder - Orphan Folder Cleaner" 
+        Height="700" Width="1000"
+        MinHeight="500" MinWidth="800"
+        WindowStartupLocation="CenterScreen"
+        Background="#FF0D0D0D">
+    
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+        
+        <!-- Glow Effect for Neon -->
+        <DropShadowEffect x:Key="NeonGlow" Color="#00FFFF" BlurRadius="15" ShadowDepth="0" Opacity="0.7"/>
+        <DropShadowEffect x:Key="NeonGlowMagenta" Color="#FF00FF" BlurRadius="15" ShadowDepth="0" Opacity="0.7"/>
+    </Window.Resources>
+    
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,20">
+            <TextBlock Text="🔍 FragmentFinder" 
+                       FontSize="32" 
+                       FontWeight="Bold"
+                       Foreground="#00FFFF"
+                       Effect="{StaticResource NeonGlow}"/>
+            <TextBlock Text="Find and remove orphaned program folders safely" 
+                       FontSize="14" 
+                       Foreground="#808080"
+                       Margin="0,5,0,0"/>
+        </StackPanel>
+
+        <!-- Controls Panel -->
+        <Border Grid.Row="1" 
+                Background="#FF1A1A1A" 
+                CornerRadius="8" 
+                Padding="15"
+                Margin="0,0,0,15">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="Scan Location:" 
+                               VerticalAlignment="Center" 
+                               Margin="0,0,10,0"
+                               Foreground="#E0E0E0"/>
+                    <ComboBox x:Name="LocationComboBox" 
+                              Width="200"
+                              SelectedIndex="6">
+                        <ComboBoxItem Content="Program Files"/>
+                        <ComboBoxItem Content="Program Files (x86)"/>
+                        <ComboBoxItem Content="AppData (Roaming)"/>
+                        <ComboBoxItem Content="AppData (Local)"/>
+                        <ComboBoxItem Content="ProgramData"/>
+                        <ComboBoxItem Content="Common Files"/>
+                        <ComboBoxItem Content="All Locations"/>
+                    </ComboBox>
+                </StackPanel>
+
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="20,0">
+                    <CheckBox x:Name="SafeModeCheckBox" 
+                              Content="Safe Mode (Recycle Bin)" 
+                              IsChecked="True"
+                              VerticalAlignment="Center"
+                              Foreground="#E0E0E0"/>
+                </StackPanel>
+
+                <Button x:Name="ScanButton" 
+                        Grid.Column="3" 
+                        Content="🔎 Start Scan" 
+                        Click="ScanButton_Click"
+                        MinWidth="120"/>
+            </Grid>
+        </Border>
+
+        <!-- Results Panel -->
+        <Border Grid.Row="2" 
+                Background="#FF1A1A1A" 
+                CornerRadius="8"
+                BorderBrush="#FF3D3D3D"
+                BorderThickness="1">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <!-- Results Header -->
+                <Border Grid.Row="0" 
+                        Background="#FF252525" 
+                        CornerRadius="8,8,0,0"
+                        Padding="15,10">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" Orientation="Horizontal">
+                            <CheckBox x:Name="SelectAllCheckBox" 
+                                      Content="Select All" 
+                                      Click="SelectAllCheckBox_Click"
+                                      VerticalAlignment="Center"
+                                      Foreground="#E0E0E0"/>
+                        </StackPanel>
+
+                        <TextBlock x:Name="ResultsSummary" 
+                                   Grid.Column="1" 
+                                   Text="No scan performed yet" 
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Foreground="#808080"/>
+
+                        <TextBlock x:Name="SelectedSizeText" 
+                                   Grid.Column="2" 
+                                   Text="" 
+                                   VerticalAlignment="Center"
+                                   Foreground="#00FF7F"
+                                   Margin="0,0,15,0"/>
+
+                        <StackPanel Grid.Column="3" Orientation="Horizontal">
+                            <ComboBox x:Name="FilterComboBox" 
+                                      Width="120"
+                                      SelectionChanged="FilterComboBox_SelectionChanged"
+                                      SelectedIndex="0">
+                                <ComboBoxItem Content="All Risks"/>
+                                <ComboBoxItem Content="Low Risk"/>
+                                <ComboBoxItem Content="Medium Risk"/>
+                                <ComboBoxItem Content="High Risk"/>
+                            </ComboBox>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+
+                <!-- Results List -->
+                <ListBox x:Name="ResultsListBox" 
+                         Grid.Row="1"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                         SelectionMode="Extended">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Margin="5">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="30"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="100"/>
+                                    <ColumnDefinition Width="80"/>
+                                    <ColumnDefinition Width="100"/>
+                                </Grid.ColumnDefinitions>
+
+                                <CheckBox Grid.Column="0" 
+                                          IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                          VerticalAlignment="Center"
+                                          Checked="ItemCheckBox_Changed"
+                                          Unchecked="ItemCheckBox_Changed"/>
+
+                                <StackPanel Grid.Column="1" Margin="10,0">
+                                    <TextBlock Text="{Binding Name}" 
+                                               FontSize="14" 
+                                               FontWeight="SemiBold"
+                                               Foreground="#E0E0E0"/>
+                                    <TextBlock Text="{Binding Path}" 
+                                               FontSize="11" 
+                                               Foreground="#606060"
+                                               TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock Text="{Binding Reason}" 
+                                               FontSize="11" 
+                                               Foreground="#00FFFF"
+                                               Margin="0,3,0,0"/>
+                                </StackPanel>
+
+                                <TextBlock Grid.Column="2" 
+                                           Text="{Binding SizeFormatted}" 
+                                           VerticalAlignment="Center"
+                                           HorizontalAlignment="Right"
+                                           Foreground="#FF00FF"
+                                           FontWeight="SemiBold"/>
+
+                                <Border Grid.Column="3" 
+                                        VerticalAlignment="Center"
+                                        HorizontalAlignment="Center"
+                                        Padding="8,3"
+                                        CornerRadius="3">
+                                    <Border.Style>
+                                        <Style TargetType="Border">
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding Risk}" Value="Low">
+                                                    <Setter Property="Background" Value="#FF1A3D1A"/>
+                                                    <Setter Property="BorderBrush" Value="#FF00FF7F"/>
+                                                    <Setter Property="BorderThickness" Value="1"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Risk}" Value="Medium">
+                                                    <Setter Property="Background" Value="#FF3D3D1A"/>
+                                                    <Setter Property="BorderBrush" Value="#FFFF6600"/>
+                                                    <Setter Property="BorderThickness" Value="1"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Risk}" Value="High">
+                                                    <Setter Property="Background" Value="#FF3D1A1A"/>
+                                                    <Setter Property="BorderBrush" Value="#FFFF3366"/>
+                                                    <Setter Property="BorderThickness" Value="1"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Border.Style>
+                                    <TextBlock Text="{Binding Risk}" FontSize="11">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Risk}" Value="Low">
+                                                        <Setter Property="Foreground" Value="#FF00FF7F"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Risk}" Value="Medium">
+                                                        <Setter Property="Foreground" Value="#FFFF6600"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding Risk}" Value="High">
+                                                        <Setter Property="Foreground" Value="#FFFF3366"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Border>
+
+                                <TextBlock Grid.Column="4" 
+                                           Text="{Binding Category}" 
+                                           VerticalAlignment="Center"
+                                           HorizontalAlignment="Right"
+                                           Foreground="#606060"
+                                           FontSize="11"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <!-- Empty State -->
+                <StackPanel x:Name="EmptyStatePanel" 
+                            Grid.Row="1"
+                            VerticalAlignment="Center" 
+                            HorizontalAlignment="Center"
+                            Visibility="Visible">
+                    <TextBlock Text="📁" 
+                               FontSize="64" 
+                               HorizontalAlignment="Center"
+                               Foreground="#404040"/>
+                    <TextBlock Text="No orphan folders found" 
+                               FontSize="16" 
+                               HorizontalAlignment="Center"
+                               Foreground="#606060"
+                               Margin="0,10,0,0"/>
+                    <TextBlock Text="Click 'Start Scan' to search for leftover folders" 
+                               FontSize="12" 
+                               HorizontalAlignment="Center"
+                               Foreground="#404040"
+                               Margin="0,5,0,0"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Progress Panel -->
+        <Border x:Name="ProgressPanel" 
+                Grid.Row="3" 
+                Background="#FF1A1A1A" 
+                CornerRadius="8"
+                Padding="15"
+                Margin="0,15,0,0"
+                Visibility="Collapsed">
+            <StackPanel>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock x:Name="StatusText" 
+                               Text="Scanning..." 
+                               Foreground="#E0E0E0"/>
+                    <TextBlock x:Name="ProgressPercent" 
+                               Grid.Column="1"
+                               Text="0%" 
+                               Foreground="#00FFFF"/>
+                </Grid>
+                <ProgressBar x:Name="ScanProgressBar" 
+                             Height="6" 
+                             Margin="0,10,0,0"
+                             Value="0"/>
+            </StackPanel>
+        </Border>
+
+        <!-- Action Buttons -->
+        <Border Grid.Row="4" 
+                Background="#FF1A1A1A" 
+                CornerRadius="8"
+                Padding="15"
+                Margin="0,15,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <Button x:Name="ExportButton" 
+                        Grid.Column="0"
+                        Content="📄 Export List" 
+                        Click="ExportButton_Click"
+                        IsEnabled="False"/>
+
+                <StackPanel Grid.Column="2" 
+                            Orientation="Horizontal" 
+                            Margin="0,0,10,0">
+                    <Button x:Name="OpenFolderButton" 
+                            Content="📂 Open Selected" 
+                            Click="OpenFolderButton_Click"
+                            IsEnabled="False"
+                            Margin="0,0,10,0"/>
+                </StackPanel>
+
+                <Button x:Name="DeleteButton" 
+                        Grid.Column="3"
+                        Content="🗑️ Delete Selected" 
+                        Style="{StaticResource DangerButton}"
+                        Click="DeleteButton_Click"
+                        IsEnabled="False"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>

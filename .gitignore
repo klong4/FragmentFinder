@@ -1,0 +1,29 @@
+# Build results
+bin/
+obj/
+[Dd]ebug/
+[Rr]elease/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# User-specific files
+*.rsuser
+*.user
+*.userosscache
+
+# Rider
+.idea/
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Logs
+*.log
+error.txt
