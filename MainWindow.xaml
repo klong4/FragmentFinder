@@ -47,12 +47,23 @@
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,15,0">
+                    <TextBlock Text="Drive:" 
+                               VerticalAlignment="Center" 
+                               Margin="0,0,10,0"
+                               Foreground="#E0E0E0"/>
+                    <ComboBox x:Name="DriveComboBox" 
+                              Width="80"
+                              SelectionChanged="DriveComboBox_SelectionChanged"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <TextBlock Text="Scan Location:" 
                                VerticalAlignment="Center" 
                                Margin="0,0,10,0"
@@ -70,7 +81,7 @@
                     </ComboBox>
                 </StackPanel>
 
-                <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="20,0">
+                <StackPanel Grid.Column="3" Orientation="Horizontal" Margin="20,0">
                     <CheckBox x:Name="SafeModeCheckBox" 
                               Content="Safe Mode (Recycle Bin)" 
                               IsChecked="True"
@@ -79,7 +90,7 @@
                 </StackPanel>
 
                 <Button x:Name="ScanButton" 
-                        Grid.Column="3" 
+                        Grid.Column="4" 
                         Content="🔎 Start Scan" 
                         Click="ScanButton_Click"
                         MinWidth="120"/>

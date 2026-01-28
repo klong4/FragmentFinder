@@ -44,7 +44,52 @@ namespace FragmentFinder
             });
 
             ResultsListBox.ItemsSource = _displayedOrphans;
+            
+            // Populate drive dropdown
+            PopulateDrives();
+            
             _isInitialized = true;
+        }
+
+        private void PopulateDrives()
+        {
+            DriveComboBox.Items.Clear();
+            
+            foreach (var drive in DriveInfo.GetDrives())
+            {
+                if (drive.IsReady && (drive.DriveType == DriveType.Fixed || drive.DriveType == DriveType.Removable))
+                {
+                    var label = string.IsNullOrEmpty(drive.VolumeLabel) 
+                        ? $"{drive.Name.TrimEnd('\\')}" 
+                        : $"{drive.Name.TrimEnd('\\')} ({drive.VolumeLabel})";
+                    
+                    DriveComboBox.Items.Add(new ComboBoxItem 
+                    { 
+                        Content = label, 
+                        Tag = drive.Name 
+                    });
+                }
+            }
+            
+            // Select the system drive by default
+            var systemDrive = Path.GetPathRoot(Environment.SystemDirectory);
+            for (int i = 0; i < DriveComboBox.Items.Count; i++)
+            {
+                if (DriveComboBox.Items[i] is ComboBoxItem item && 
+                    item.Tag?.ToString()?.Equals(systemDrive, StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    DriveComboBox.SelectedIndex = i;
+                    break;
+                }
+            }
+            
+            if (DriveComboBox.SelectedIndex < 0 && DriveComboBox.Items.Count > 0)
+                DriveComboBox.SelectedIndex = 0;
+        }
+
+        private void DriveComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            // Just allow selection, scanning will use the selected drive
         }
 
         private async void ScanButton_Click(object sender, RoutedEventArgs e)
@@ -57,12 +102,19 @@ namespace FragmentFinder
 
             _cancellationTokenSource = new CancellationTokenSource();
             var location = (ScanLocation)LocationComboBox.SelectedIndex;
+            
+            // Get selected drive
+            string? selectedDrive = null;
+            if (DriveComboBox.SelectedItem is ComboBoxItem selectedItem)
+            {
+                selectedDrive = selectedItem.Tag?.ToString();
+            }
 
             try
             {
                 SetScanningState(true);
 
-                _allOrphans = await _scannerService.ScanAsync(location, _cancellationTokenSource.Token);
+                _allOrphans = await _scannerService.ScanAsync(location, selectedDrive, _cancellationTokenSource.Token);
                 
                 ApplyFilter();
                 UpdateSummary();

@@ -51,7 +51,8 @@ namespace FragmentFinder.Services
         public event Action<int>? ProgressUpdate;
 
         public async Task<List<OrphanFolder>> ScanAsync(
-            ScanLocation location, 
+            ScanLocation location,
+            string? selectedDrive = null,
             CancellationToken cancellationToken = default)
         {
             var orphans = new List<OrphanFolder>();
@@ -59,7 +60,7 @@ namespace FragmentFinder.Services
             var registryPaths = _installedProgramService.GetRegistryInstallPaths();
             var oldestInstall = _installedProgramService.GetOldestKnownInstallDate();
 
-            var foldersToScan = GetFoldersToScan(location);
+            var foldersToScan = GetFoldersToScan(location, selectedDrive);
 
             int totalFolders = 0;
             int processedFolders = 0;
@@ -122,42 +123,127 @@ namespace FragmentFinder.Services
             return orphans.OrderByDescending(o => o.SizeBytes).ToList();
         }
 
-        private static List<string> GetFoldersToScan(ScanLocation location)
+        private static List<string> GetFoldersToScan(ScanLocation location, string? selectedDrive = null)
         {
             var folders = new List<string>();
+            var systemDrive = Path.GetPathRoot(Environment.SystemDirectory) ?? "C:\\";
+            var drive = selectedDrive ?? systemDrive;
+            var isSystemDrive = drive.Equals(systemDrive, StringComparison.OrdinalIgnoreCase);
+
+            // Helper to build path on selected drive
+            string BuildPath(string relativePath) => Path.Combine(drive, relativePath);
 
             switch (location)
             {
                 case ScanLocation.ProgramFiles:
-                    folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles));
+                    if (isSystemDrive)
+                        folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles));
+                    else
+                        folders.Add(BuildPath("Program Files"));
                     break;
                 case ScanLocation.ProgramFilesX86:
-                    folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86));
+                    if (isSystemDrive)
+                        folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86));
+                    else
+                        folders.Add(BuildPath("Program Files (x86)"));
                     break;
                 case ScanLocation.AppData:
-                    folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));
+                    if (isSystemDrive)
+                        folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));
+                    else
+                    {
+                        // Check for user folders on non-system drive
+                        var usersPath = BuildPath("Users");
+                        if (Directory.Exists(usersPath))
+                        {
+                            foreach (var userDir in Directory.GetDirectories(usersPath))
+                            {
+                                var appDataPath = Path.Combine(userDir, "AppData", "Roaming");
+                                if (Directory.Exists(appDataPath))
+                                    folders.Add(appDataPath);
+                            }
+                        }
+                    }
                     break;
                 case ScanLocation.LocalAppData:
-                    folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+                    if (isSystemDrive)
+                        folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+                    else
+                    {
+                        var usersPath = BuildPath("Users");
+                        if (Directory.Exists(usersPath))
+                        {
+                            foreach (var userDir in Directory.GetDirectories(usersPath))
+                            {
+                                var localAppDataPath = Path.Combine(userDir, "AppData", "Local");
+                                if (Directory.Exists(localAppDataPath))
+                                    folders.Add(localAppDataPath);
+                            }
+                        }
+                    }
                     break;
                 case ScanLocation.ProgramData:
-                    folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData));
+                    if (isSystemDrive)
+                        folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData));
+                    else
+                        folders.Add(BuildPath("ProgramData"));
                     break;
                 case ScanLocation.CommonFiles:
-                    folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles));
-                    folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFilesX86));
+                    if (isSystemDrive)
+                    {
+                        folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles));
+                        folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFilesX86));
+                    }
+                    else
+                    {
+                        folders.Add(Path.Combine(BuildPath("Program Files"), "Common Files"));
+                        folders.Add(Path.Combine(BuildPath("Program Files (x86)"), "Common Files"));
+                    }
                     break;
                 case ScanLocation.All:
                 default:
-                    folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles));
-                    folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86));
-                    folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));
-                    folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
-                    folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData));
+                    if (isSystemDrive)
+                    {
+                        folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles));
+                        folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86));
+                        folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));
+                        folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+                        folders.Add(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData));
+                    }
+                    else
+                    {
+                        // Non-system drive: scan standard locations
+                        folders.Add(BuildPath("Program Files"));
+                        folders.Add(BuildPath("Program Files (x86)"));
+                        folders.Add(BuildPath("ProgramData"));
+                        
+                        // Check for user profiles on this drive
+                        var usersPath = BuildPath("Users");
+                        if (Directory.Exists(usersPath))
+                        {
+                            foreach (var userDir in Directory.GetDirectories(usersPath))
+                            {
+                                var userName = Path.GetFileName(userDir);
+                                // Skip system user folders
+                                if (userName.Equals("Public", StringComparison.OrdinalIgnoreCase) ||
+                                    userName.Equals("Default", StringComparison.OrdinalIgnoreCase) ||
+                                    userName.Equals("Default User", StringComparison.OrdinalIgnoreCase))
+                                    continue;
+                                    
+                                var appDataRoaming = Path.Combine(userDir, "AppData", "Roaming");
+                                var appDataLocal = Path.Combine(userDir, "AppData", "Local");
+                                
+                                if (Directory.Exists(appDataRoaming))
+                                    folders.Add(appDataRoaming);
+                                if (Directory.Exists(appDataLocal))
+                                    folders.Add(appDataLocal);
+                            }
+                        }
+                    }
                     break;
             }
 
-            return folders.Where(f => !string.IsNullOrEmpty(f)).Distinct().ToList();
+            return folders.Where(f => !string.IsNullOrEmpty(f) && Directory.Exists(f)).Distinct().ToList();
         }
 
         private static (bool isOrphan, string reason, RiskLevel risk) AnalyzeFolder(
