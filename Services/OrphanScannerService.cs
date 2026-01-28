@@ -24,14 +24,22 @@ namespace FragmentFinder.Services
             "Microsoft SDKs", "Microsoft SQL Server", "Microsoft Office",
             "MSBuild", "dotnet", "Package Store", "Uninstall Information",
             "desktop.ini", "Microsoft Update Health Tools", "Windows Kits",
-            "NVIDIA Corporation", "AMD", "Intel", "Realtek"
+            "NVIDIA Corporation", "AMD", "Intel", "Realtek", "Google", "Mozilla",
+            "Package Cache", "installer", "InstallShield Installation Information"
         };
 
         // Common leftover patterns
         private static readonly string[] OrphanPatterns = new[]
         {
             "_uninstall", "uninstall", "_uninst", ".old", "_old", "backup",
-            "_backup", "~", "_temp", "temp_", ".tmp"
+            "_backup", "~", "_temp", "temp_", ".tmp", "_cache", ".cache",
+            "_deleted", "remove", "_remove"
+        };
+
+        // File extensions that indicate active use
+        private static readonly string[] ActiveFileExtensions = new[]
+        {
+            ".exe", ".dll", ".sys", ".msi"
         };
 
         public OrphanScannerService()
@@ -49,20 +57,17 @@ namespace FragmentFinder.Services
             var orphans = new List<OrphanFolder>();
             var installedPrograms = _installedProgramService.GetInstalledProgramNames();
             var registryPaths = _installedProgramService.GetRegistryInstallPaths();
+            var oldestInstall = _installedProgramService.GetOldestKnownInstallDate();
 
             var foldersToScan = GetFoldersToScan(location);
 
             int totalFolders = 0;
             int processedFolders = 0;
 
-            // First count total folders
             foreach (var baseFolder in foldersToScan)
             {
                 if (!Directory.Exists(baseFolder)) continue;
-                try
-                {
-                    totalFolders += Directory.GetDirectories(baseFolder).Length;
-                }
+                try { totalFolders += Directory.GetDirectories(baseFolder).Length; }
                 catch { }
             }
 
@@ -73,14 +78,8 @@ namespace FragmentFinder.Services
                 StatusUpdate?.Invoke($"Scanning: {baseFolder}");
 
                 string[] subFolders;
-                try
-                {
-                    subFolders = Directory.GetDirectories(baseFolder);
-                }
-                catch (UnauthorizedAccessException)
-                {
-                    continue;
-                }
+                try { subFolders = Directory.GetDirectories(baseFolder); }
+                catch (UnauthorizedAccessException) { continue; }
 
                 foreach (var folder in subFolders)
                 {
@@ -88,25 +87,21 @@ namespace FragmentFinder.Services
 
                     processedFolders++;
                     if (totalFolders > 0)
-                    {
                         ProgressUpdate?.Invoke((int)((processedFolders * 100.0) / totalFolders));
-                    }
 
                     var folderName = Path.GetFileName(folder);
 
-                    // Skip protected folders
                     if (IsProtectedFolder(folderName))
                         continue;
 
-                    // Check if this is an orphan
                     var (isOrphan, reason, risk) = await Task.Run(() => 
-                        AnalyzeFolder(folder, folderName, installedPrograms, registryPaths), 
+                        AnalyzeFolder(folder, folderName, installedPrograms, registryPaths, oldestInstall), 
                         cancellationToken);
 
                     if (isOrphan)
                     {
                         var size = await Task.Run(() => GetFolderSize(folder), cancellationToken);
-                        var lastModified = GetLastModified(folder);
+                        var (lastModified, lastAccessed, created) = GetFolderDates(folder);
                         var category = GetCategory(baseFolder);
 
                         orphans.Add(new OrphanFolder
@@ -169,7 +164,8 @@ namespace FragmentFinder.Services
             string folderPath, 
             string folderName,
             HashSet<string> installedPrograms,
-            HashSet<string> registryPaths)
+            HashSet<string> registryPaths,
+            DateTime oldestInstall)
         {
             // Check if folder path matches any registry install location
             if (registryPaths.Any(p => folderPath.Equals(p, StringComparison.OrdinalIgnoreCase) ||
@@ -187,7 +183,9 @@ namespace FragmentFinder.Services
                 return (false, string.Empty, RiskLevel.Low);
             }
 
-            // Check for uninstall leftovers pattern
+            // ===== ENHANCED DETECTION START =====
+
+            // 1. Check for leftover patterns in name
             foreach (var pattern in OrphanPatterns)
             {
                 if (folderName.Contains(pattern, StringComparison.OrdinalIgnoreCase))
@@ -196,57 +194,114 @@ namespace FragmentFinder.Services
                 }
             }
 
-            // Check if folder is empty or nearly empty
+            // 2. Check folder contents and dates
             try
             {
-                var files = Directory.GetFiles(folderPath, "*", SearchOption.AllDirectories);
-                if (files.Length == 0)
+                var dirInfo = new DirectoryInfo(folderPath);
+                var created = dirInfo.CreationTime;
+                var lastWrite = dirInfo.LastWriteTime;
+                
+                // Get file info
+                var files = dirInfo.GetFiles("*", SearchOption.AllDirectories);
+                var fileCount = files.Length;
+
+                // 3. Empty folder check
+                if (fileCount == 0)
                 {
                     return (true, "Folder is empty", RiskLevel.Low);
                 }
-                if (files.Length <= 2)
+
+                // 4. Check if only contains junk files
+                var junkFiles = files.Where(f => 
+                    f.Name.Equals("desktop.ini", StringComparison.OrdinalIgnoreCase) ||
+                    f.Extension.Equals(".log", StringComparison.OrdinalIgnoreCase) ||
+                    f.Extension.Equals(".tmp", StringComparison.OrdinalIgnoreCase) ||
+                    f.Name.Equals("Thumbs.db", StringComparison.OrdinalIgnoreCase)).ToList();
+
+                if (junkFiles.Count == fileCount)
                 {
-                    // Check if only desktop.ini or similar
-                    if (files.All(f => Path.GetFileName(f).Equals("desktop.ini", StringComparison.OrdinalIgnoreCase) ||
-                                       Path.GetExtension(f).Equals(".log", StringComparison.OrdinalIgnoreCase)))
+                    return (true, "Contains only system/temp files (logs, desktop.ini)", RiskLevel.Low);
+                }
+
+                // 5. Check last access time across all files
+                var lastAccessedFile = files.Max(f => 
+                {
+                    try { return f.LastAccessTime; }
+                    catch { return DateTime.MinValue; }
+                });
+
+                var daysSinceAccess = (DateTime.Now - lastAccessedFile).TotalDays;
+                var daysSinceModify = (DateTime.Now - lastWrite).TotalDays;
+                var daysSinceCreation = (DateTime.Now - created).TotalDays;
+
+                // 6. Check for uninstaller artifacts only
+                var exeFiles = files.Where(f => f.Extension.Equals(".exe", StringComparison.OrdinalIgnoreCase)).ToList();
+                var uninstallerOnly = exeFiles.All(f => 
+                    f.Name.Contains("unins", StringComparison.OrdinalIgnoreCase) ||
+                    f.Name.Contains("uninstall", StringComparison.OrdinalIgnoreCase));
+
+                if (exeFiles.Any() && uninstallerOnly)
+                {
+                    return (true, "Only contains uninstaller executable(s), main app missing", RiskLevel.Low);
+                }
+
+                // 7. Very old folder that was never accessed after creation
+                if (daysSinceCreation > 180 && Math.Abs(daysSinceAccess - daysSinceCreation) < 7)
+                {
+                    return (true, $"Created {(int)(daysSinceCreation/30)} months ago, never used since", RiskLevel.Low);
+                }
+
+                // 8. Files not accessed in a very long time (over 1 year)
+                if (daysSinceAccess > 365)
+                {
+                    return (true, $"No files accessed in {(int)(daysSinceAccess/30)} months", RiskLevel.Low);
+                }
+
+                // 9. Files not accessed in 6+ months
+                if (daysSinceAccess > 180)
+                {
+                    return (true, $"No files accessed in {(int)(daysSinceAccess/30)} months", RiskLevel.Medium);
+                }
+
+                // 10. Old folder, no matching program, not modified
+                if (daysSinceModify > 365)
+                {
+                    return (true, $"Not modified in {(int)(daysSinceModify/30)} months, no matching program", RiskLevel.Medium);
+                }
+
+                // 11. Created before oldest known install and no exe files (stale data folder)
+                if (created < oldestInstall && !files.Any(f => 
+                    ActiveFileExtensions.Contains(f.Extension.ToLowerInvariant())))
+                {
+                    return (true, $"Data folder from removed program (created {created:MMM yyyy})", RiskLevel.Medium);
+                }
+
+                // 12. Check for version-specific folders (e.g., "AppName 1.0" when newer exists)
+                var versionMatch = System.Text.RegularExpressions.Regex.Match(
+                    folderName, @"[\s_\-]v?\d+[\.\d]+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                
+                if (versionMatch.Success && daysSinceAccess > 90)
+                {
+                    var baseName = folderName.Substring(0, versionMatch.Index);
+                    if (installedPrograms.Any(p => p.StartsWith(baseName, StringComparison.OrdinalIgnoreCase)))
                     {
-                        return (true, "Contains only system files (desktop.ini/logs)", RiskLevel.Low);
+                        return (true, $"Old version folder, newer version may be installed", RiskLevel.Medium);
                     }
                 }
-            }
-            catch { }
 
-            // Check folder age - if not modified in 6+ months and not matching programs
-            try
-            {
-                var lastWrite = Directory.GetLastWriteTime(folderPath);
-                var monthsOld = (DateTime.Now - lastWrite).TotalDays / 30;
-
-                if (monthsOld > 12)
+                // 13. Small folder with only config/data files, not accessed recently
+                if (fileCount <= 10 && daysSinceAccess > 90)
                 {
-                    // Very old folder not matching any installed program
-                    return (true, $"Folder not modified in {(int)monthsOld} months, no matching program found", RiskLevel.Medium);
+                    var hasNoExecutables = !files.Any(f => 
+                        f.Extension.Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
+                        f.Extension.Equals(".dll", StringComparison.OrdinalIgnoreCase));
+                    
+                    if (hasNoExecutables)
+                    {
+                        return (true, $"Small config/data folder, unused for {(int)(daysSinceAccess/30)} months", RiskLevel.High);
+                    }
                 }
-                else if (monthsOld > 6)
-                {
-                    return (true, $"Folder not modified in {(int)monthsOld} months, no matching program found", RiskLevel.High);
-                }
-            }
-            catch { }
 
-            // Check for uninstaller artifacts
-            try
-            {
-                var hasUninstallerOnly = Directory.GetFiles(folderPath, "unins*.exe", SearchOption.TopDirectoryOnly).Any() ||
-                                         Directory.GetFiles(folderPath, "*uninstall*.exe", SearchOption.TopDirectoryOnly).Any();
-                
-                var mainExeCount = Directory.GetFiles(folderPath, "*.exe", SearchOption.TopDirectoryOnly)
-                    .Count(f => !Path.GetFileName(f).Contains("unins", StringComparison.OrdinalIgnoreCase));
-
-                if (hasUninstallerOnly && mainExeCount == 0)
-                {
-                    return (true, "Only contains uninstaller, main executable missing", RiskLevel.Low);
-                }
             }
             catch { }
 
@@ -257,7 +312,8 @@ namespace FragmentFinder.Services
         {
             return ProtectedFolders.Contains(folderName) ||
                    folderName.StartsWith("Microsoft", StringComparison.OrdinalIgnoreCase) ||
-                   folderName.StartsWith("Windows", StringComparison.OrdinalIgnoreCase);
+                   folderName.StartsWith("Windows", StringComparison.OrdinalIgnoreCase) ||
+                   folderName.StartsWith(".", StringComparison.Ordinal); // Hidden folders like .git
         }
 
         private static long GetFolderSize(string folderPath)
@@ -272,21 +328,19 @@ namespace FragmentFinder.Services
                         catch { return 0; }
                     });
             }
-            catch
-            {
-                return 0;
-            }
+            catch { return 0; }
         }
 
-        private static DateTime GetLastModified(string folderPath)
+        private static (DateTime lastModified, DateTime lastAccessed, DateTime created) GetFolderDates(string folderPath)
         {
             try
             {
-                return Directory.GetLastWriteTime(folderPath);
+                var info = new DirectoryInfo(folderPath);
+                return (info.LastWriteTime, info.LastAccessTime, info.CreationTime);
             }
             catch
             {
-                return DateTime.MinValue;
+                return (DateTime.MinValue, DateTime.MinValue, DateTime.MinValue);
             }
         }
 
