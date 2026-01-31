@@ -270,12 +270,18 @@ namespace FragmentFinder
 
             if (result != MessageBoxResult.Yes) return;
 
+            _cancellationTokenSource?.Cancel();
+            _cancellationTokenSource = new CancellationTokenSource();
+
             try
             {
                 SetScanningState(true);
                 StatusText.Text = "Deleting folders...";
 
-                var cleanupResult = await _cleanupService.DeleteFoldersAsync(selectedItems, useRecycleBin);
+                var cleanupResult = await _cleanupService.DeleteFoldersAsync(
+                    selectedItems, 
+                    useRecycleBin, 
+                    _cancellationTokenSource.Token);
 
                 // Remove deleted items from lists
                 foreach (var deleted in cleanupResult.DeletedFolders)
@@ -302,10 +308,17 @@ namespace FragmentFinder
                 }
 
                 MessageBox.Show(message, "Cleanup Complete",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBoxButton.OK, 
+                    cleanupResult.FailedFolders.Any() ? MessageBoxImage.Warning : MessageBoxImage.Information);
 
                 UpdateSummary();
                 UpdateSelectedSize();
+            }
+            catch (OperationCanceledException)
+            {
+                StatusText.Text = "Deletion cancelled";
+                MessageBox.Show("Deletion operation was cancelled.", "Cancelled",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
             }
             catch (Exception ex)
             {
@@ -329,16 +342,32 @@ namespace FragmentFinder
 
             if (dialog.ShowDialog() == true)
             {
+                _cancellationTokenSource?.Cancel();
+                _cancellationTokenSource = new CancellationTokenSource();
+
                 try
                 {
-                    await _cleanupService.CreateBackupListAsync(_allOrphans, dialog.FileName);
+                    StatusText.Text = "Exporting results...";
+                    await _cleanupService.CreateBackupListAsync(
+                        _allOrphans, 
+                        dialog.FileName, 
+                        _cancellationTokenSource.Token);
                     MessageBox.Show($"Export saved to:\n{dialog.FileName}", "Export Complete",
+                        MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                catch (OperationCanceledException)
+                {
+                    MessageBox.Show("Export was cancelled.", "Cancelled",
                         MessageBoxButton.OK, MessageBoxImage.Information);
                 }
                 catch (Exception ex)
                 {
                     MessageBox.Show($"Error exporting: {ex.Message}", "Export Error",
                         MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+                finally
+                {
+                    StatusText.Text = "Ready";
                 }
             }
         }

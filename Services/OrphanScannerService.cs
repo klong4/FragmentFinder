@@ -25,7 +25,8 @@ namespace FragmentFinder.Services
             "MSBuild", "dotnet", "Package Store", "Uninstall Information",
             "desktop.ini", "Microsoft Update Health Tools", "Windows Kits",
             "NVIDIA Corporation", "AMD", "Intel", "Realtek", "Google", "Mozilla",
-            "Package Cache", "installer", "InstallShield Installation Information"
+            "Package Cache", "installer", "InstallShield Installation Information",
+            "DirectX", "Microsoft Visual Studio", "Visual Studio", "Git"
         };
 
         // Common leftover patterns
@@ -33,7 +34,7 @@ namespace FragmentFinder.Services
         {
             "_uninstall", "uninstall", "_uninst", ".old", "_old", "backup",
             "_backup", "~", "_temp", "temp_", ".tmp", "_cache", ".cache",
-            "_deleted", "remove", "_remove"
+            "_deleted", "remove", "_remove", "(old)", "(backup)"
         };
 
         // File extensions that indicate active use
@@ -65,26 +66,49 @@ namespace FragmentFinder.Services
             int totalFolders = 0;
             int processedFolders = 0;
 
+            // Count folders with better error handling
             foreach (var baseFolder in foldersToScan)
             {
+                if (cancellationToken.IsCancellationRequested)
+                    break;
+                    
                 if (!Directory.Exists(baseFolder)) continue;
-                try { totalFolders += Directory.GetDirectories(baseFolder).Length; }
+                try 
+                { 
+                    totalFolders += Directory.GetDirectories(baseFolder).Length; 
+                }
                 catch { }
             }
 
             foreach (var baseFolder in foldersToScan)
             {
+                if (cancellationToken.IsCancellationRequested)
+                    break;
+                    
                 if (!Directory.Exists(baseFolder)) continue;
 
                 StatusUpdate?.Invoke($"Scanning: {baseFolder}");
 
                 string[] subFolders;
-                try { subFolders = Directory.GetDirectories(baseFolder); }
-                catch (UnauthorizedAccessException) { continue; }
+                try 
+                { 
+                    subFolders = Directory.GetDirectories(baseFolder); 
+                }
+                catch (UnauthorizedAccessException) 
+                { 
+                    StatusUpdate?.Invoke($"Skipped (no access): {baseFolder}");
+                    continue; 
+                }
+                catch (Exception ex)
+                {
+                    StatusUpdate?.Invoke($"Error accessing: {baseFolder} - {ex.Message}");
+                    continue;
+                }
 
                 foreach (var folder in subFolders)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
+                    if (cancellationToken.IsCancellationRequested)
+                        break;
 
                     processedFolders++;
                     if (totalFolders > 0)
@@ -96,12 +120,12 @@ namespace FragmentFinder.Services
                         continue;
 
                     var (isOrphan, reason, risk) = await Task.Run(() => 
-                        AnalyzeFolder(folder, folderName, installedPrograms, registryPaths, oldestInstall), 
+                        AnalyzeFolder(folder, folderName, installedPrograms, registryPaths, oldestInstall, cancellationToken), 
                         cancellationToken);
 
                     if (isOrphan)
                     {
-                        var size = await Task.Run(() => GetFolderSize(folder), cancellationToken);
+                        var size = await Task.Run(() => GetFolderSize(folder, cancellationToken), cancellationToken);
                         var (lastModified, lastAccessed, created) = GetFolderDates(folder);
                         var category = GetCategory(baseFolder);
 
@@ -156,12 +180,16 @@ namespace FragmentFinder.Services
                         var usersPath = BuildPath("Users");
                         if (Directory.Exists(usersPath))
                         {
-                            foreach (var userDir in Directory.GetDirectories(usersPath))
+                            try
                             {
-                                var appDataPath = Path.Combine(userDir, "AppData", "Roaming");
-                                if (Directory.Exists(appDataPath))
-                                    folders.Add(appDataPath);
+                                foreach (var userDir in Directory.GetDirectories(usersPath))
+                                {
+                                    var appDataPath = Path.Combine(userDir, "AppData", "Roaming");
+                                    if (Directory.Exists(appDataPath))
+                                        folders.Add(appDataPath);
+                                }
                             }
+                            catch { }
                         }
                     }
                     break;
@@ -173,12 +201,16 @@ namespace FragmentFinder.Services
                         var usersPath = BuildPath("Users");
                         if (Directory.Exists(usersPath))
                         {
-                            foreach (var userDir in Directory.GetDirectories(usersPath))
+                            try
                             {
-                                var localAppDataPath = Path.Combine(userDir, "AppData", "Local");
-                                if (Directory.Exists(localAppDataPath))
-                                    folders.Add(localAppDataPath);
+                                foreach (var userDir in Directory.GetDirectories(usersPath))
+                                {
+                                    var localAppDataPath = Path.Combine(userDir, "AppData", "Local");
+                                    if (Directory.Exists(localAppDataPath))
+                                        folders.Add(localAppDataPath);
+                                }
                             }
+                            catch { }
                         }
                     }
                     break;
@@ -221,23 +253,27 @@ namespace FragmentFinder.Services
                         var usersPath = BuildPath("Users");
                         if (Directory.Exists(usersPath))
                         {
-                            foreach (var userDir in Directory.GetDirectories(usersPath))
+                            try
                             {
-                                var userName = Path.GetFileName(userDir);
-                                // Skip system user folders
-                                if (userName.Equals("Public", StringComparison.OrdinalIgnoreCase) ||
-                                    userName.Equals("Default", StringComparison.OrdinalIgnoreCase) ||
-                                    userName.Equals("Default User", StringComparison.OrdinalIgnoreCase))
-                                    continue;
+                                foreach (var userDir in Directory.GetDirectories(usersPath))
+                                {
+                                    var userName = Path.GetFileName(userDir);
+                                    // Skip system user folders
+                                    if (userName.Equals("Public", StringComparison.OrdinalIgnoreCase) ||
+                                        userName.Equals("Default", StringComparison.OrdinalIgnoreCase) ||
+                                        userName.Equals("Default User", StringComparison.OrdinalIgnoreCase))
+                                        continue;
+                                        
+                                    var appDataRoaming = Path.Combine(userDir, "AppData", "Roaming");
+                                    var appDataLocal = Path.Combine(userDir, "AppData", "Local");
                                     
-                                var appDataRoaming = Path.Combine(userDir, "AppData", "Roaming");
-                                var appDataLocal = Path.Combine(userDir, "AppData", "Local");
-                                
-                                if (Directory.Exists(appDataRoaming))
-                                    folders.Add(appDataRoaming);
-                                if (Directory.Exists(appDataLocal))
-                                    folders.Add(appDataLocal);
+                                    if (Directory.Exists(appDataRoaming))
+                                        folders.Add(appDataRoaming);
+                                    if (Directory.Exists(appDataLocal))
+                                        folders.Add(appDataLocal);
+                                }
                             }
+                            catch { }
                         }
                     }
                     break;
@@ -251,8 +287,12 @@ namespace FragmentFinder.Services
             string folderName,
             HashSet<string> installedPrograms,
             HashSet<string> registryPaths,
-            DateTime oldestInstall)
+            DateTime oldestInstall,
+            CancellationToken cancellationToken = default)
         {
+            if (cancellationToken.IsCancellationRequested)
+                return (false, string.Empty, RiskLevel.Low);
+
             // Check if folder path matches any registry install location
             if (registryPaths.Any(p => folderPath.Equals(p, StringComparison.OrdinalIgnoreCase) ||
                                        folderPath.StartsWith(p + "\\", StringComparison.OrdinalIgnoreCase)))
@@ -269,8 +309,6 @@ namespace FragmentFinder.Services
                 return (false, string.Empty, RiskLevel.Low);
             }
 
-            // ===== ENHANCED DETECTION START =====
-
             // 1. Check for leftover patterns in name
             foreach (var pattern in OrphanPatterns)
             {
@@ -283,12 +321,23 @@ namespace FragmentFinder.Services
             // 2. Check folder contents and dates
             try
             {
+                if (cancellationToken.IsCancellationRequested)
+                    return (false, string.Empty, RiskLevel.Low);
+
                 var dirInfo = new DirectoryInfo(folderPath);
                 var created = dirInfo.CreationTime;
                 var lastWrite = dirInfo.LastWriteTime;
                 
-                // Get file info
-                var files = dirInfo.GetFiles("*", SearchOption.AllDirectories);
+                FileInfo[] files;
+                try
+                {
+                    files = dirInfo.GetFiles("*", SearchOption.AllDirectories);
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    return (false, string.Empty, RiskLevel.Low);
+                }
+                
                 var fileCount = files.Length;
 
                 // 3. Empty folder check
@@ -304,17 +353,26 @@ namespace FragmentFinder.Services
                     f.Extension.Equals(".tmp", StringComparison.OrdinalIgnoreCase) ||
                     f.Name.Equals("Thumbs.db", StringComparison.OrdinalIgnoreCase)).ToList();
 
-                if (junkFiles.Count == fileCount)
+                if (junkFiles.Count == fileCount && fileCount > 0)
                 {
                     return (true, "Contains only system/temp files (logs, desktop.ini)", RiskLevel.Low);
                 }
 
-                // 5. Check last access time across all files
-                var lastAccessedFile = files.Max(f => 
+                // 5. Check last access time across all files with timeout protection
+                DateTime lastAccessedFile = DateTime.MinValue;
+                int filesChecked = 0;
+                foreach (var file in files)
                 {
-                    try { return f.LastAccessTime; }
-                    catch { return DateTime.MinValue; }
-                });
+                    if (cancellationToken.IsCancellationRequested || filesChecked++ > 1000)
+                        break;
+                        
+                    try 
+                    { 
+                        if (file.LastAccessTime > lastAccessedFile)
+                            lastAccessedFile = file.LastAccessTime;
+                    }
+                    catch { }
+                }
 
                 var daysSinceAccess = (DateTime.Now - lastAccessedFile).TotalDays;
                 var daysSinceModify = (DateTime.Now - lastWrite).TotalDays;
@@ -322,11 +380,11 @@ namespace FragmentFinder.Services
 
                 // 6. Check for uninstaller artifacts only
                 var exeFiles = files.Where(f => f.Extension.Equals(".exe", StringComparison.OrdinalIgnoreCase)).ToList();
-                var uninstallerOnly = exeFiles.All(f => 
+                var uninstallerOnly = exeFiles.Count > 0 && exeFiles.All(f => 
                     f.Name.Contains("unins", StringComparison.OrdinalIgnoreCase) ||
                     f.Name.Contains("uninstall", StringComparison.OrdinalIgnoreCase));
 
-                if (exeFiles.Any() && uninstallerOnly)
+                if (uninstallerOnly)
                 {
                     return (true, "Only contains uninstaller executable(s), main app missing", RiskLevel.Low);
                 }
@@ -337,32 +395,38 @@ namespace FragmentFinder.Services
                     return (true, $"Created {(int)(daysSinceCreation/30)} months ago, never used since", RiskLevel.Low);
                 }
 
-                // 8. Files not accessed in a very long time (over 1 year)
+                // 8. Files not accessed in a very long time (over 2 years)
+                if (daysSinceAccess > 730)
+                {
+                    return (true, $"No files accessed in {(int)(daysSinceAccess/365)} year(s)", RiskLevel.Low);
+                }
+
+                // 9. Files not accessed in over 1 year
                 if (daysSinceAccess > 365)
                 {
                     return (true, $"No files accessed in {(int)(daysSinceAccess/30)} months", RiskLevel.Low);
                 }
 
-                // 9. Files not accessed in 6+ months
+                // 10. Files not accessed in 6+ months
                 if (daysSinceAccess > 180)
                 {
                     return (true, $"No files accessed in {(int)(daysSinceAccess/30)} months", RiskLevel.Medium);
                 }
 
-                // 10. Old folder, no matching program, not modified
+                // 11. Old folder, no matching program, not modified
                 if (daysSinceModify > 365)
                 {
                     return (true, $"Not modified in {(int)(daysSinceModify/30)} months, no matching program", RiskLevel.Medium);
                 }
 
-                // 11. Created before oldest known install and no exe files (stale data folder)
+                // 12. Created before oldest known install and no exe files (stale data folder)
                 if (created < oldestInstall && !files.Any(f => 
                     ActiveFileExtensions.Contains(f.Extension.ToLowerInvariant())))
                 {
                     return (true, $"Data folder from removed program (created {created:MMM yyyy})", RiskLevel.Medium);
                 }
 
-                // 12. Check for version-specific folders (e.g., "AppName 1.0" when newer exists)
+                // 13. Check for version-specific folders (e.g., "AppName 1.0" when newer exists)
                 var versionMatch = System.Text.RegularExpressions.Regex.Match(
                     folderName, @"[\s_\-]v?\d+[\.\d]+$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
                 
@@ -375,7 +439,7 @@ namespace FragmentFinder.Services
                     }
                 }
 
-                // 13. Small folder with only config/data files, not accessed recently
+                // 14. Small folder with only config/data files, not accessed recently
                 if (fileCount <= 10 && daysSinceAccess > 90)
                 {
                     var hasNoExecutables = !files.Any(f => 
@@ -387,7 +451,10 @@ namespace FragmentFinder.Services
                         return (true, $"Small config/data folder, unused for {(int)(daysSinceAccess/30)} months", RiskLevel.High);
                     }
                 }
-
+            }
+            catch (OperationCanceledException)
+            {
+                return (false, string.Empty, RiskLevel.Low);
             }
             catch { }
 
@@ -399,20 +466,29 @@ namespace FragmentFinder.Services
             return ProtectedFolders.Contains(folderName) ||
                    folderName.StartsWith("Microsoft", StringComparison.OrdinalIgnoreCase) ||
                    folderName.StartsWith("Windows", StringComparison.OrdinalIgnoreCase) ||
-                   folderName.StartsWith(".", StringComparison.Ordinal); // Hidden folders like .git
+                   folderName.StartsWith(".", StringComparison.Ordinal);
         }
 
-        private static long GetFolderSize(string folderPath)
+        private static long GetFolderSize(string folderPath, CancellationToken cancellationToken = default)
         {
             try
             {
-                return new DirectoryInfo(folderPath)
-                    .EnumerateFiles("*", SearchOption.AllDirectories)
-                    .Sum(file => 
-                    {
-                        try { return file.Length; }
-                        catch { return 0; }
-                    });
+                long totalSize = 0;
+                var dirInfo = new DirectoryInfo(folderPath);
+                
+                foreach (var file in dirInfo.EnumerateFiles("*", SearchOption.AllDirectories))
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                        break;
+                        
+                    try 
+                    { 
+                        totalSize += file.Length; 
+                    }
+                    catch { }
+                }
+                
+                return totalSize;
             }
             catch { return 0; }
         }
